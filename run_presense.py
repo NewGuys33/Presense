@@ -27,12 +27,39 @@ def load_config():
 def main():
     parser = argparse.ArgumentParser(description="PreSense V0 desktop prototype")
     parser.add_argument("--demo", action="store_true", help="scripted fixture; no AI or audio")
+    parser.add_argument("--local", action="store_true", help="local Ollama translation and prediction, no API key")
+    parser.add_argument("--local-model", help="downloaded Ollama model; implies --local")
+    parser.add_argument("--check-local", action="store_true", help="test Ollama translation without loading audio models")
     parser.add_argument("--headless", action="store_true", help="print protocol snapshots")
     parser.add_argument("--seconds", type=float, default=0, help="auto-stop after N seconds")
     parser.add_argument("--device", type=int, help="loopback device index from --list-devices")
     parser.add_argument("--list-devices", action="store_true")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
+    config = None
+    if not args.demo or args.check_local:
+        config = load_config()
+        if args.local or args.local_model or args.check_local:
+            config.setdefault("translation", {})["translation_model"] = "ollama"
+        if args.local_model:
+            config.setdefault("ollama", {})["model"] = args.local_model
+    if args.check_local:
+        from presense.local_model import LocalModel
+        async def check_local():
+            opts = config.get("ollama", {})
+            model = LocalModel(model=opts.get("model", "qwen2.5:3b"),
+                               base_url=opts.get("base_url", "http://127.0.0.1:11434"),
+                               timeout=opts.get("timeout_seconds", 30))
+            try:
+                await model.check()
+                print(await model.translate("Increasing the firing angle delays conduction."))
+            finally:
+                await model.close()
+        try:
+            asyncio.run(check_local())
+        except Exception as exc:
+            parser.exit(1, str(exc) + "\n")
+        return
     stop = threading.Event()
     updates = queue.Queue(maxsize=1)
     system = None
@@ -70,15 +97,14 @@ def main():
         device = next((d for d in loopbacks if d["index"] == args.device), None)
         if device is None:
             parser.error("Choose a listed WASAPI loopback device")
-        config = load_config()
         config["websocket"]["port"] = args.port
         for section in ("openai", "deepl"):
             config[section]["api_key"] = upstream.decode_api_key(config[section].get("api_key", ""))
-        if not config["openai"]["api_key"]:
-            parser.error("Set OPENAI_API_KEY or openai.api_key locally for semantic prediction")
         mode = config.get("translation", {}).get("translation_model")
-        if mode not in ("openai", "deepl"):
-            parser.error("V0 supports Whisper + openai/deepl translation only")
+        if mode not in ("openai", "deepl", "ollama"):
+            parser.error("V0 supports Whisper + openai/deepl/ollama translation")
+        if mode != "ollama" and not config["openai"]["api_key"]:
+            parser.error("Set OPENAI_API_KEY or choose --local for Ollama")
         if mode == "deepl" and not config["deepl"]["api_key"]:
             parser.error("DeepL translation selected but DEEPL_API_KEY is empty")
         system = build_system(upstream, config, device, emit, status)
