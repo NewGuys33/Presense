@@ -27,6 +27,26 @@ class StateTests(unittest.TestCase):
     def result(self):
         return {"prediction": "output voltage decreases", "prediction_translation": "电压降低"}
 
+    def test_reading_history_survives_context_expiry_and_late_translation(self):
+        old = self.state.snapshot()
+        self.clock.now = 61
+        self.state.final("Next short sentence.")
+        self.assertEqual(len(self.state.request()["history"]), 1)
+        self.assertTrue(self.state.set_translation(1, "增大触发角延迟导通。"))
+        rows = self.state.snapshot()["transcript"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["translation"], "增大触发角延迟导通。")
+        self.assertEqual(rows[1]["translation"], "")
+        self.assertEqual(old["transcript"][0]["translation"], "")
+
+    def test_reading_history_is_bounded_and_preserves_repeated_sentences(self):
+        for _ in range(501):
+            self.state.final("Repeated sentence.")
+        rows = self.state.snapshot()["transcript"]
+        self.assertEqual(len(rows), 500)
+        self.assertEqual(len({row["id"] for row in rows}), 500)
+        self.assertFalse(self.state.set_translation(1, "evicted"))
+
     def test_cold_start_gates_prediction(self):
         self.state.apply(self.state.revision, self.result())
         self.assertEqual(self.state.prediction, "")
