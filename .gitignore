@@ -1,0 +1,10 @@
+.venv/
+vendor/
+config.yaml
+.env
+models/
+__pycache__/
+*.pyc
+*.log
+*.jsonl
+*_translate.txt
