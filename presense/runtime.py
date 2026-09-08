@@ -1,0 +1,83 @@
+"""Adapter to pinned CaptionSystem; retains WASAPI, final ASR and translation."""
+import asyncio
+import sys
+from pathlib import Path
+from .state import CaptionState
+from .pipeline import Pipeline
+from .predictor import SemanticPredictor
+from .broadcast import StateBroadcaster
+
+
+def load_upstream():
+    root = Path(__file__).resolve().parents[1]
+    vendor = root / "vendor" / "realtime-caption"
+    if not (vendor / "presense_upstream.py").exists():
+        raise RuntimeError("Run setup_presense.bat first")
+    sys.path.insert(0, str(vendor))
+    import presense_upstream
+    return presense_upstream
+
+
+def build_system(upstream, config, device, emit, status):
+    class PresenseSystem(upstream.CaptionSystem):
+        def __init__(self):
+            super().__init__(config, device, config["whisper"]["model"],
+                             on_ready=lambda: status("Listening · 系统音频已就绪"),
+                             on_realtime_error_external=status)
+            self.pipeline = None
+            self._broadcaster = StateBroadcaster()
+            # Bound legacy translation requests; the worker already serializes them.
+            if hasattr(self._translator, "_client"):
+                self._translator._client = self._translator._client.with_options(timeout=8, max_retries=0)
+
+        def _on_live(self, text):
+            if self._loop and not self._loop.is_closed() and not self._stop_event.is_set():
+                self._loop.call_soon_threadsafe(self._partial, text)
+
+        def _partial(self, text):
+            if self.pipeline:
+                self.pipeline.partial(text)
+
+        def _on_transcription(self, text):
+            if self._loop and not self._loop.is_closed() and not self._stop_event.is_set():
+                self._loop.call_soon_threadsafe(self._final, text)
+
+        def _final(self, text):
+            if self.pipeline:
+                self.pipeline.final(text)
+
+        def prepare(self):
+            super().prepare()
+            if self._recorder is None:
+                status("ASR 初始化失败；请查看控制台，检查模型下载和依赖")
+                self._stop_event.set()
+                if self._loop and self._stop_event_async:
+                    self._loop.call_soon_threadsafe(self._stop_event_async.set)
+
+        async def run(self):
+            p = config.get("presense", {})
+            predictor = SemanticPredictor(config["openai"]["api_key"], p.get("prediction_model", "gpt-4o-mini"))
+            state = CaptionState(window=p.get("context_seconds", 60),
+                                 cold_start=p.get("cold_start_seconds", 5),
+                                 ttl=p.get("prediction_ttl_seconds", 4))
+
+            def publish(snapshot):
+                self._broadcaster.submit(snapshot)
+                emit(snapshot)
+
+            async def translate(text):
+                return await asyncio.to_thread(self._translator.translate, text)
+
+            self.pipeline = Pipeline(predictor, translate, publish, state=state,
+                                     interval=p.get("prediction_interval", 1.2))
+            self.pipeline.start()
+            pump = asyncio.create_task(self._broadcaster.pump())
+            try:
+                await super().run()
+            finally:
+                await self.pipeline.close()
+                pump.cancel()
+                await asyncio.gather(pump, return_exceptions=True)
+                await predictor.close()
+
+    return PresenseSystem()
