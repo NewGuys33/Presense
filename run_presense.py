@@ -155,9 +155,73 @@ def main():
     label = tk.Label(root, text="DEMO · 固定脚本" if args.demo else "Starting audio and models…",
                      fg="#b6c5d5", bg="#101319", wraplength=720, anchor="w")
     label.pack(anchor="w", padx=28, pady=(0, 12))
+    history_frame = tk.Frame(root, bg="#191e27", padx=15, pady=10)
+    history_frame.pack(fill="both", expand=True, padx=28, pady=5)
+    tk.Label(history_frame, text="CONFIRMED · 已确认 · 保留最近 500 段，可向上回看",
+             fg="white", bg="#191e27", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+    follow = tk.BooleanVar(value=True)
+    tk.Checkbutton(history_frame, text="自动跟随最新字幕（取消勾选可停留阅读）",
+                   variable=follow, bg="#191e27", fg="#b6c5d5",
+                   selectcolor="#101319", activebackground="#191e27").pack(anchor="w")
+    text_frame = tk.Frame(history_frame, bg="#191e27")
+    text_frame.pack(fill="both", expand=True)
+    transcript = tk.Text(text_frame, wrap="word", height=12, width=1,
+                         bg="#191e27", fg="white", relief="flat", borderwidth=0,
+                         font=("Segoe UI", 13), state="disabled", padx=2, pady=5)
+    scrollbar = tk.Scrollbar(text_frame, command=transcript.yview)
+    transcript.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side="right", fill="y")
+    transcript.pack(side="left", fill="both", expand=True)
+    transcript.tag_configure("translation", font=("Segoe UI", 17), spacing3=14)
+    transcript.tag_configure("original", spacing3=5)
+    rendered_history = []
+
+    def latest():
+        follow.set(True)
+        transcript.see("end")
+
+    tk.Button(history_frame, text="回到最新 ↓", command=latest).pack(anchor="e")
+
+    def render_history(items):
+        nonlocal rendered_history
+        if items == rendered_history:
+            return
+        at_bottom = transcript.yview()[1] >= 0.995
+        should_follow = follow.get() and at_bottom
+        if not at_bottom:
+            follow.set(False)
+        # Anchor to an utterance and its wrapped-line offset, even when an
+        # earlier translation arrives or the bounded history evicts a row.
+        top = transcript.index("@0,0")
+        anchor = None
+        offset = 0
+        for row in rendered_history:
+            mark = "row_" + str(row["id"])
+            if transcript.compare(mark, "<=", top):
+                anchor = mark
+                offset = (transcript.count(mark, top, "displaylines") or (0,))[0]
+        transcript.configure(state="normal")
+        transcript.delete("1.0", "end")
+        for mark in transcript.mark_names():
+            if mark.startswith("row_"):
+                transcript.mark_unset(mark)
+        for row in items:
+            mark = "row_" + str(row["id"])
+            transcript.mark_set(mark, "end-1c")
+            transcript.mark_gravity(mark, "left")
+            transcript.insert("end", row["text"] + "\n", "original")
+            transcript.insert("end", (row["translation"] or "翻译中…") + "\n\n", "translation")
+        transcript.configure(state="disabled")
+        if should_follow:
+            transcript.see("end")
+        elif anchor in transcript.mark_names():
+            transcript.yview(anchor + " + " + str(offset) + " display lines")
+        else:
+            transcript.yview("1.0")
+        rendered_history = items
+
     fields = {}
-    for key, title, color in (("confirmed", "CONFIRMED · 已确认", "#ffffff"),
-                              ("live", "LIVE · 识别中", "#d2d7df"),
+    for key, title, color in (("live", "LIVE · 识别中", "#d2d7df"),
                               ("prediction", "PREDICTION · AI 推测，尚未说出", "#939ca9")):
         frame = tk.Frame(root, bg="#191e27", padx=15, pady=10)
         frame.pack(fill="both", expand=True, padx=28, pady=5)
@@ -183,6 +247,8 @@ def main():
         try:
             snap = updates.get_nowait()
             label.configure(text=snap.get("status", ""))
+            if "transcript" in snap:
+                render_history(snap["transcript"])
             for key, widget in fields.items():
                 if key in snap: widget.configure(text=snap[key] or "—")
         except queue.Empty:
