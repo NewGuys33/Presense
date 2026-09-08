@@ -5,17 +5,84 @@ Understand before they finish speaking.
 这是按照《第一版代码-realtime-caption.txt》开始实现的 PC 软件原型。
 当前版本为 **0.1.0 开发版**，已经实现预测层与底座接线，尚未完成 Windows 实机验收。
 
+## 本机翻译与预测（Ollama，无需 API key）
+
+升级后可以用 `--local` 同时切换翻译和语义预测到本机。Whisper 仍在本机识别英语。
+此模式不调用 OpenAI/DeepL，也不会在本机请求失败时自动切换云端。
+首次安装依赖、下载底座和模型仍需联网。
+
+### 已有 Windows 安装如何升级
+
+从 GitHub 下载新版 ZIP，只覆盖本项目源码文件，保留现有 `.venv`、`vendor` 和 `config.yaml`。
+源码 ZIP 不包含这三个本地项。不要删掉整个项目文件夹，也不必重装已有 Python 依赖。
+启动时会校验原始底座并重新生成适配文件。
+
+1. 从 [Ollama Windows 官方页面](https://ollama.com/download/windows) 安装 Ollama，保持它运行。
+   安装后重新打开 VS Code 的 PowerShell。
+2. 下载一个本机模型（初始试用 Qwen2.5 3B）：
+
+```powershell
+ollama pull qwen2.5:3b
+```
+
+该模型下载约 1.9 GB，这不是运行时总内存占用。模型支持中文与英文。
+[模型说明](https://ollama.com/library/qwen2.5:3b)。3B 用来先验证流程，预测质量和延迟需在你的电脑上测量。
+
+3. 在项目目录运行独立翻译测试（不加载 Whisper、不采集声音）：
+
+```powershell
+cd E:\Presense\Presense-main
+$env:PYTHONUTF8 = "1"
+.\.venv\Scripts\python.exe run_presense.py --check-local
+```
+
+正常时输出“增大触发角会延迟导通”含义的中文。模型首次加载可能较慢。
+4. 启动真实音频 + 本机翻译预测：
+
+```powershell
+.\.venv\Scripts\python.exe run_presense.py --local
+```
+
+选择实际扬声器或耳机对应的 Loopback 编号，然后播放英语视频。
+`--local` 会覆盖本次运行的云端配置，因此现有 config.yaml 中的 API key 可以留空。
+不要运行原始 vendor/main.py 来测试本机模式；本机适配在 run_presense.py 中。
+
+### 永久保存本机配置（可选）
+
+在现有 config.yaml 的 `translation` 下仅修改 `translation_model`，其余字段保持。
+另在顶层增加一个 `ollama` 块（不要重复添加同名块）：
+
+```yaml
+translation:
+  translation_model: ollama
+  target_language: Chinese
+
+ollama:
+  base_url: http://127.0.0.1:11434
+  model: qwen2.5:3b
+  timeout_seconds: 60
+```
+
+之后可以不带 `--local` 启动。`presense.prediction_model` 仅用于 OpenAI 模式，
+本机模式使用 `ollama.model` 同时处理翻译与预测。只允许本机地址，不支持云端 Ollama 模型。
+本机两类推理串行执行，避免抢占显存；模型响应落后于 Live 时仍会丢弃过期预测。
+若能翻译但预测经常不出现，请记录电脑 CPU、显卡、显存、RAM 和响应耗时，再调整模型。
+切换模型需先 `ollama pull 模型名`，再设置 `ollama.model` 或启动时使用 `--local-model 模型名`。
+
+本次验证：22 项测试通过，包括本机 HTTP 接口模拟、无 key 初始化、冷启动、云端地址拒绝、
+串行请求、模型缺失提示及旧功能回归。没有在你的 Windows 电脑或真实 Ollama 模型上完成实测。
+
 ## 当前成果
 
 - `Confirmed / Live / Prediction` 三种状态及对应中文翻译。
 - 30–60 秒滚动原文上下文（默认 60 秒；另设条数上限控制请求体积）。
 - 冷启动时只翻译，具备历史原文且超过 5 秒后才允许预测。
-- OpenAI 语义预测调用、推测主题/关键概念/近期观点、保守空预测。
+- OpenAI 或本机 Ollama 语义预测调用、推测主题/关键概念/近期观点、保守空预测。
 - 输入变化后丢弃旧模型响应；预测 4 秒过期；Live 15 秒无更新清空。
 - 最终 ASR 到来立即清除预测，Confirmed 只取最终识别原文。
 - 保留原项目 WASAPI 音频采集、Whisper 最终识别与 OpenAI/DeepL 翻译。
 - 独立三栏桌面窗口；沿用 8765 端口输出 WebSocket；重连发送最新状态。
-- 演示模式、14 项自动测试、Windows 安装和启动脚本。
+- 演示模式、22 项自动测试、Windows 安装和启动脚本。
 
 **演示是固定脚本，不代表真正提前预测成功。** 已经写好真实模型接口，但本次没有使用真实 API key，也没有 Windows 音频设备。
 
@@ -30,7 +97,7 @@ Understand before they finish speaking.
 本项目作为增量层保存；不把上游完整源码混入本项目压缩包。
 `bootstrap.py` 会下载固定提交到 `vendor/realtime-caption/`，校验 `main.py` 的 Git blob SHA，
 然后生成 `presense_upstream.py`。原始 `main.py` 保留供基线测试。
-生成文件唯一的源码补丁位于 recorder 初始化参数：启用实时识别，设置 Live 模型、刷新间隔和回调。
+生成文件包含两处适配：recorder 启用 Live 回调；Ollama 模式跳过上游云翻译客户端初始化。
 `presense/runtime.py` 子类接收最终 ASR 与 Live 事件，并接入预测层。
 
 基于 [RealtimeSTT 官方实时转录接口](https://github.com/KoljaB/RealtimeSTT/blob/master/RealtimeSTT/audio_recorder.py)，
