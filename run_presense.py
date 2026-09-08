@@ -7,6 +7,7 @@ from pathlib import Path
 import queue
 import sys
 import threading
+import time
 
 ROOT = Path(__file__).resolve().parent
 
@@ -147,7 +148,7 @@ def main():
     import tkinter as tk
     root = tk.Tk()
     root.title("PreSense V0" + (" — DEMO" if args.demo else ""))
-    root.geometry("800x630")
+    root.geometry("800x820")
     root.configure(bg="#101319")
     root.minsize(540, 550)
     tk.Label(root, text="PreSense", font=("Segoe UI", 27, "bold"),
@@ -172,7 +173,7 @@ def main():
     transcript.configure(yscrollcommand=scrollbar.set)
     scrollbar.pack(side="right", fill="y")
     transcript.pack(side="left", fill="both", expand=True)
-    transcript.tag_configure("translation", font=("Segoe UI", 17), spacing3=14)
+    transcript.tag_configure("translation", font=("Segoe UI", 13), spacing3=14)
     transcript.tag_configure("original", spacing3=5)
     rendered_history = []
 
@@ -226,11 +227,40 @@ def main():
         frame = tk.Frame(root, bg="#191e27", padx=15, pady=10)
         frame.pack(fill="both", expand=True, padx=28, pady=5)
         tk.Label(frame, text=title, fg=color, bg="#191e27", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        for name, size in ((key, 13), (key + "_translation", 17)):
-            widget = tk.Label(frame, text="—", fg=color, bg="#191e27", justify="left",
-                              anchor="w", wraplength=710, font=("Segoe UI", size))
-            widget.pack(fill="x", pady=2)
+        body = tk.Frame(frame, bg="#191e27", height=150)
+        body.pack(fill="both", expand=True)
+        body.grid_propagate(False)
+        body.columnconfigure(0, weight=1)
+        for row, name in enumerate((key, key + "_translation")):
+            body.rowconfigure(row, weight=1, uniform="languages")
+            widget = tk.Text(body, height=3, width=1, wrap="word",
+                             fg=color, bg="#191e27", relief="flat",
+                             font=("Segoe UI", 13), state="disabled")
+            widget.grid(row=row, column=0, sticky="nsew", pady=3)
+            scroll = tk.Scrollbar(body, command=widget.yview)
+            scroll.grid(row=row, column=1, sticky="ns")
+            widget.configure(yscrollcommand=scroll.set)
             fields[name] = widget
+    live_note = tk.Label(root, text="LIVE 为草稿 · 中文最多每 2 秒修订一次",
+                         fg="#b6c5d5", bg="#101319")
+    live_note.pack(anchor="w", padx=28)
+    latest_snap = {}
+    shown = {}
+    last_translation_at = 0.0
+    display_uid = None
+
+    def set_field(key, value):
+        value = value or "—"
+        if shown.get(key) == value:
+            return
+        widget = fields[key]
+        top = widget.index("@0,0")
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.insert("1.0", value)
+        widget.configure(state="disabled")
+        widget.yview(top)
+        shown[key] = value
 
     def close():
         stop.set()
@@ -244,21 +274,41 @@ def main():
     root.protocol("WM_DELETE_WINDOW", close)
 
     def poll():
+        nonlocal last_translation_at, display_uid
         try:
             snap = updates.get_nowait()
+            latest_snap.update(snap)
             label.configure(text=snap.get("status", ""))
             if "transcript" in snap:
                 render_history(snap["transcript"])
-            for key, widget in fields.items():
-                if key in snap: widget.configure(text=snap[key] or "—")
         except queue.Empty:
             pass
+        for key in fields:
+            if key != "live_translation" and key in latest_snap:
+                set_field(key, latest_snap[key])
+        rows = latest_snap.get("transcript", [])
+        uid = (latest_snap.get("session_id"), rows[-1]["id"] if rows else 0)
+        if uid != display_uid:
+            set_field("live_translation", "")
+            last_translation_at = 0.0
+            display_uid = uid
+        value = latest_snap.get("live_translation", "")
+        # Status belongs outside the paragraph: it must not change line wrapping.
+        value = value.replace(" ⟨后续内容翻译中…⟩", "")
+        now = time.monotonic()
+        if not latest_snap.get("live"):
+            set_field("live_translation", "")
+            last_translation_at = 0.0
+        elif value and value != "翻译中…":
+            if now - last_translation_at >= 2.0:
+                set_field("live_translation", value)
+                last_translation_at = now
+            live_note.configure(text="LIVE 为草稿 · 中文最多每 2 秒修订一次")
+        else:
+            # Keep readable draft while its replacement is being translated.
+            live_note.configure(text="LIVE 中文修订中 · 暂时保留上一版草稿")
         root.after(50, poll)
 
-    def resize(event):
-        if event.widget is root:
-            for widget in fields.values(): widget.configure(wraplength=max(200, event.width-95))
-    root.bind("<Configure>", resize)
     poll()
     root.mainloop()
 
