@@ -9,7 +9,7 @@ from presense.pipeline import Pipeline
 from presense.predictor import validate_result
 from presense.broadcast import StateBroadcaster
 from presense.demo import run_demo
-from bootstrap import patch_main, OLD
+from bootstrap import patch_main, OLD, TRANSLATOR_OLD
 
 
 class Clock:
@@ -85,7 +85,7 @@ class StateTests(unittest.TestCase):
             with self.assertRaises(ValueError): validate_result(value)
 
     def test_patch_requires_exactly_one_hook(self):
-        patched = patch_main("f(\n" + OLD + "\n)")
+        patched = patch_main("f(\n" + OLD + "\n)\n" + TRANSLATOR_OLD)
         self.assertIn("on_realtime_transcription_update=self._on_live", patched)
         with self.assertRaises(ValueError): patch_main(OLD + OLD)
         with self.assertRaises(ValueError): patch_main("unrelated source")
