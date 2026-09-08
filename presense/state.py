@@ -20,6 +20,8 @@ class CaptionState:
         self.clock, self.window, self.cold_start, self.ttl = clock, window, cold_start, ttl
         self.session = uuid.uuid4().hex
         self.history = deque(maxlen=200)
+        # Reading history is independent of the short AI context window.
+        self.transcript = deque(maxlen=500)
         self.started = clock()
         self.revision = self.utterance_id = self.sequence = 0
         self.live = self.live_translation = self.prediction = self.prediction_translation = ""
@@ -56,7 +58,9 @@ class CaptionState:
             return None
         self.prune()
         self.utterance_id += 1
-        self.history.append(Utterance(self.utterance_id, self.clock(), text))
+        item = Utterance(self.utterance_id, self.clock(), text)
+        self.history.append(item)
+        self.transcript.append(item)
         self.revision += 1
         self.live = self.live_translation = ""
         self.live_at = None
@@ -66,7 +70,7 @@ class CaptionState:
 
     def set_translation(self, utterance_id, text):
         self.prune()
-        for item in self.history:
+        for item in self.transcript:
             if item.id == utterance_id:
                 item.translation = text
                 return True
@@ -114,6 +118,8 @@ class CaptionState:
         last = self.history[-1] if self.history else None
         return {"protocol": "presense.v0", "session_id": self.session,
                 "sequence": self.sequence, "revision": self.revision,
+                "transcript": [{"id": u.id, "text": u.text, "translation": u.translation}
+                               for u in self.transcript],
                 "confirmed": last.text if last else "", "live": self.live,
                 "prediction": self.prediction,
                 "confirmed_translation": last.translation if last else "",
