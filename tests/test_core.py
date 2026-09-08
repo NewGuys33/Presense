@@ -137,6 +137,57 @@ class AsyncTests(unittest.IsolatedAsyncioTestCase):
         pipeline.partial("must not appear after stopping")
         self.assertEqual(pipeline.state.live, "")
 
+    async def test_live_translation_survives_extension_and_promotes_exact_final(self):
+        emitted = []
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def predict(req): return {}
+        async def translate(text):
+            entered.set()
+            await release.wait()
+            return "电流减少" if "decreases" in text else "电流增加"
+        p = Pipeline(predict, translate, emitted.append)
+        task = asyncio.create_task(p._translate_live())
+        p.tasks = [task]
+        try:
+            p.partial("The current increases")
+            await asyncio.wait_for(entered.wait(), 1)
+            p.partial("The current increases slowly")
+            release.set()
+            await asyncio.sleep(0.05)
+            self.assertIn("电流增加", emitted[-1]["live_translation"])
+            self.assertIn("后续", emitted[-1]["live_translation"])
+            p.partial("The current decreases")
+            self.assertNotIn("电流增加", emitted[-1]["live_translation"])
+            await asyncio.sleep(0.35)
+            p.final("The current decreases")
+            self.assertEqual(p.state.snapshot()["confirmed_translation"], "电流减少")
+            self.assertEqual(p.finals.qsize(), 0)
+        finally:
+            await p.close()
+
+    async def test_live_result_cannot_cross_into_next_utterance(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def predict(req): return {}
+        async def translate(text):
+            entered.set()
+            await release.wait()
+            return "old translation"
+        emitted = []
+        p = Pipeline(predict, translate, emitted.append)
+        task = asyncio.create_task(p._translate_live())
+        p.tasks = [task]
+        try:
+            p.partial("Old draft")
+            await asyncio.wait_for(entered.wait(), 1)
+            p.final("Corrected final")
+            p.partial("New sentence")
+            release.set()
+            await asyncio.sleep(0.05)
+            self.assertNotIn("old translation", emitted[-1]["live_translation"])
+            self.assertEqual(p.state.snapshot()["confirmed_translation"], "")
+        finally:
+            await p.close()
+
     async def test_translation_backlog_is_bounded(self):
         async def predict(req): return {}
         async def translate(text): return text
