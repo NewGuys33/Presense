@@ -11,8 +11,13 @@ from .broadcast import StateBroadcaster
 def load_upstream():
     root = Path(__file__).resolve().parents[1]
     vendor = root / "vendor" / "realtime-caption"
-    if not (vendor / "presense_upstream.py").exists():
+    if not (vendor / "main.py").exists():
         raise RuntimeError("Run setup_presense.bat first")
+    # Regenerate the adapter when updating an existing installation. No config overwrite.
+    from bootstrap import verify, patch_main
+    verify(vendor / "main.py")
+    (vendor / "presense_upstream.py").write_text(
+        patch_main((vendor / "main.py").read_text(encoding="utf-8")), encoding="utf-8")
     sys.path.insert(0, str(vendor))
     import presense_upstream
     return presense_upstream
@@ -56,7 +61,21 @@ def build_system(upstream, config, device, emit, status):
 
         async def run(self):
             p = config.get("presense", {})
-            predictor = SemanticPredictor(config["openai"]["api_key"], p.get("prediction_model", "gpt-4o-mini"))
+            local = config.get("translation", {}).get("translation_model") == "ollama"
+            if local:
+                from .local_model import LocalModel
+                opts = config.get("ollama", {})
+                predictor = LocalModel(model=opts.get("model", "qwen2.5:3b"),
+                                       base_url=opts.get("base_url", "http://127.0.0.1:11434"),
+                                       timeout=opts.get("timeout_seconds", 30))
+                try:
+                    await predictor.check()
+                except Exception as exc:
+                    status(str(exc))
+                    await predictor.close()
+                    raise
+            else:
+                predictor = SemanticPredictor(config["openai"]["api_key"], p.get("prediction_model", "gpt-4o-mini"))
             state = CaptionState(window=p.get("context_seconds", 60),
                                  cold_start=p.get("cold_start_seconds", 5),
                                  ttl=p.get("prediction_ttl_seconds", 4))
@@ -66,6 +85,8 @@ def build_system(upstream, config, device, emit, status):
                 emit(snapshot)
 
             async def translate(text):
+                if local:
+                    return await predictor.translate(text)
                 return await asyncio.to_thread(self._translator.translate, text)
 
             self.pipeline = Pipeline(predictor, translate, publish, state=state,
