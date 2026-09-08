@@ -1,0 +1,31 @@
+openai:
+  api_key: "" # Prefer OPENAI_API_KEY environment variable.
+deepl:
+  api_key: "" # Optional DEEPL_API_KEY environment variable.
+translation:
+  translation_model: openai # openai or deepl (not openai-realtime)
+  target_language: Chinese
+  system_prompt: "Translate only the supplied text into Simplified {target_language}. Preserve unfinished sentences. Return only the translation. Do not add a continuation."
+whisper:
+  model: small
+  language: en
+  compute_type: int8
+  device: cpu
+websocket:
+  host: 127.0.0.1
+  port: 8765
+output:
+  log_dir: .
+audio:
+  host_api: wasapi
+vad:
+  silero_sensitivity: 0.4
+  post_speech_silence_duration: 0.6
+presense:
+  live_model: tiny.en
+  partial_interval: 0.5
+  context_seconds: 60
+  cold_start_seconds: 5
+  prediction_ttl_seconds: 4
+  prediction_interval: 1.2
+  prediction_model: gpt-4o-mini
