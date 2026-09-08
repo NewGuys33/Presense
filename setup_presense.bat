@@ -1,5 +1,6 @@
 @echo off
 setlocal
+set "PYTHONUTF8=1"
 cd /d "%~dp0"
 py -3.11 -m venv .venv
 if errorlevel 1 goto fail
@@ -11,6 +12,6 @@ echo Setup complete. Run start_presense.bat --demo first.
 pause
 exit /b 0
 :fail
-echo Setup failed. Install Python 3.11 x64 and inspect the error above.
+echo Setup failed. Inspect the error above; Python does not necessarily need reinstalling.
 pause
 exit /b 1
