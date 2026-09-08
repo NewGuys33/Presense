@@ -15,6 +15,8 @@ REPO = "ShigetoshiMizuno/realtime-caption"
 MAIN_BLOB = "70966dc1c04940060d2045d47ef39b4db430984d"
 UPSTREAM = ROOT / "vendor" / "realtime-caption"
 OLD = "            enable_realtime_transcription=False,"
+TRANSLATOR_OLD = "            self._translator = TranslationService(config)"
+TRANSLATOR_NEW = "            self._translator = None if trans_model == 'ollama' else TranslationService(config)"
 NEW = """            enable_realtime_transcription=True,
             realtime_model_type=self._config.get('presense', {}).get('live_model', 'tiny.en'),
             realtime_processing_pause=self._config.get('presense', {}).get('partial_interval', 0.5),
@@ -22,9 +24,9 @@ NEW = """            enable_realtime_transcription=True,
 
 
 def patch_main(source):
-    if source.count(OLD) != 1:
+    if source.count(OLD) != 1 or source.count(TRANSLATOR_OLD) != 1:
         raise ValueError("Upstream hook differs; refusing an ambiguous patch")
-    return source.replace(OLD, NEW, 1)
+    return source.replace(OLD, NEW, 1).replace(TRANSLATOR_OLD, TRANSLATOR_NEW, 1)
 
 
 def setup():
