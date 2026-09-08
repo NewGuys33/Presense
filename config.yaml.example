@@ -3,14 +3,18 @@ openai:
 deepl:
   api_key: "" # Optional DEEPL_API_KEY environment variable.
 translation:
-  translation_model: openai # openai or deepl (not openai-realtime)
+  translation_model: ollama # Local translation and prediction; no API key required.
   target_language: Chinese
   system_prompt: "Translate only the supplied text into Simplified {target_language}. Preserve unfinished sentences. Return only the translation. Do not add a continuation."
+ollama:
+  base_url: http://127.0.0.1:11434
+  model: qwen2.5:3b
+  timeout_seconds: 60
 whisper:
-  model: small
+  model: large-v3
   language: en
-  compute_type: int8
-  device: cpu
+  compute_type: float16
+  device: cuda
 websocket:
   host: 127.0.0.1
   port: 8765
@@ -22,10 +26,9 @@ vad:
   silero_sensitivity: 0.4
   post_speech_silence_duration: 0.6
 presense:
-  live_model: tiny.en
+  live_model: small.en
   partial_interval: 0.5
   context_seconds: 60
   cold_start_seconds: 5
   prediction_ttl_seconds: 4
   prediction_interval: 1.2
-  prediction_model: gpt-4o-mini
