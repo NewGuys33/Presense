@@ -169,6 +169,7 @@ def main():
         return
 
     import tkinter as tk
+    import tkinter.font as tkfont
     root = tk.Tk()
     root.title("PreSense V0" + (" — DEMO" if args.demo else ""))
     root.geometry("800x820")
@@ -318,7 +319,7 @@ def main():
 
     def overlay_font(value):
         for widget in overlay_fields:
-            widget.configure(font=("Segoe UI", int(float(value))))
+            widget.configure(font=("Microsoft YaHei", int(float(value)), "bold"))
 
     tk.Scale(toolbar, from_=12, to=32, orient="horizontal", variable=overlay_size,
              command=overlay_font, length=120, bg="#191e27", fg="white",
@@ -338,7 +339,9 @@ def main():
             super().__init__(parent, bg=transparent_key, highlightthickness=0,
                              width=928, height=36)
             self.caption = ""
-            self.caption_font = ("Segoe UI", 18)
+            self.caption_font = ("Microsoft YaHei", 18, "bold")
+            self.pages = [""]
+            self.page_at = time.monotonic()
             self.wrap = 900
 
         def configure(self, **kwargs):
@@ -347,15 +350,40 @@ def main():
             self.wrap = kwargs.pop("wraplength", self.wrap)
             if kwargs:
                 super().configure(**kwargs)
+            # Wrap by measured glyph width, preferring word boundaries.
+            font = tkfont.Font(font=self.caption_font)
+            lines = []
+            rest = " ".join(self.caption.split())
+            while rest:
+                end = 1
+                while end <= len(rest) and font.measure(rest[:end]) <= self.wrap - 12:
+                    end += 1
+                end = max(1, end - 1)
+                if end < len(rest):
+                    space = rest.rfind(" ", 0, end + 1)
+                    if space > end // 2:
+                        end = space
+                lines.append(rest[:end].strip())
+                rest = rest[end:].lstrip()
+            self.pages = ["\n".join(lines[i:i + 2]) for i in range(0, len(lines), 2)] or [""]
+            self.page_at = time.monotonic()
+            self.rendered_page = None
+            self.render_page()
+
+        def render_page(self):
+            page = min(len(self.pages) - 1, int((time.monotonic() - self.page_at) / 4))
+            if getattr(self, "rendered_page", None) == page:
+                return
+            self.rendered_page = page
             self.delete("all")
-            opts = dict(text=self.caption, font=self.caption_font, width=self.wrap,
+            opts = dict(text=self.pages[page], font=self.caption_font,
                         anchor="n", justify="center")
             x = (self.wrap + 28) / 2
-            for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1)):
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 self.create_text(x + dx, 5 + dy, fill="black", **opts)
-            item = self.create_text(x, 5, fill="white", **opts)
-            bounds = self.bbox(item)
-            super().configure(width=self.wrap + 28, height=(bounds[3] + 5 if bounds else 36))
+            self.create_text(x, 5, fill="white", **opts)
+            height = tkfont.Font(font=self.caption_font).metrics("linespace") * 2 + 12
+            super().configure(width=self.wrap + 28, height=height)
 
     for row in range(2):
         widget = OutlinedCaption(overlay)
@@ -416,6 +444,8 @@ def main():
         overlay_tick = now
         if overlay.state() == "withdrawn" or overlay_paused.get():
             reading_queue.until += elapsed
+            for widget in overlay_fields:
+                widget.page_at += elapsed
             return
         if overlay_mode.get() == "阅读优先":
             rows = latest_snap.get("transcript", [])
@@ -431,12 +461,18 @@ def main():
             pair = (row["text"], row["translation"] or "翻译中…") if row else ("等待老师说话…", "")
             note = "已确认字幕" if row else "等待字幕"
         overlay_status.configure(text=note)
+        changed_pair = False
         for i, value in enumerate(pair):
             if overlay_cache.get(i) == value:
                 continue
             widget = overlay_fields[i]
             widget.configure(text=value)
             overlay_cache[i] = value
+            changed_pair = True
+        if changed_pair and overlay_mode.get() == "阅读优先":
+            reading_queue.until = max(reading_queue.until, now + max(len(w.pages) for w in overlay_fields) * 4)
+        for widget in overlay_fields:
+            widget.render_page()
 
     def close():
         stop.set()
