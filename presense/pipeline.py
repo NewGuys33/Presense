@@ -13,6 +13,7 @@ class Pipeline:
         self.closed = False
         self.live_source = self.live_result = ""
         self.live_uid = -1
+        self.inference = asyncio.Lock()
 
     def start(self):
         self.tasks = [asyncio.create_task(self._predict()),
@@ -57,8 +58,12 @@ class Pipeline:
         while True:
             uid, text = await self.finals.get()
             try:
-                result = await self.translator(text)
-                self.state.set_translation(uid, result)
+                async with self.inference:
+                    row = next((u for u in self.state.transcript if u.id == uid), None)
+                    if row is None or row.translation:
+                        continue
+                    result = await self.translator(text)
+                    self.state.set_translation(uid, result)
             except Exception as exc:
                 self.state.status = "Translation error: " + type(exc).__name__
             self.publish()
@@ -70,12 +75,21 @@ class Pipeline:
             text = self.state.live
             uid = self.state.utterance_id
             key = (uid, text)
-            if not text or key == previous:
+            if not text or key == previous or not self.finals.empty():
                 continue
             # Single in-flight request; read the latest partial after each result.
             previous = key
             try:
-                result = await self.translator(text)
+                async with self.inference:
+                    # A queued partial may have changed while another request ran.
+                    if uid != self.state.utterance_id or not self.finals.empty():
+                        previous = None
+                        continue
+                    text = self.state.live
+                    if not text:
+                        continue
+                    previous = (uid, text)
+                    result = await self.translator(text)
                 if uid == self.state.utterance_id and self.state.live.startswith(text):
                     self.live_uid, self.live_source, self.live_result = uid, text, result
                     self.publish()
@@ -97,12 +111,17 @@ class Pipeline:
         while True:
             await asyncio.sleep(self.interval)
             req = self.state.request()
-            if not req["live"] or req["revision"] == previous:
+            if (not req["live"] or req["revision"] == previous
+                    or self.inference.locked() or not self.finals.empty()
+                    or not self.state.ready()
+                    or self.live_uid != self.state.utterance_id
+                    or self.live_source != req["live"]):
                 continue
             previous = req["revision"]
             req["allow_prediction"] = self.state.ready()
             try:
-                result = await self.predictor(req)
+                async with self.inference:
+                    result = await self.predictor(req)
                 if self.state.apply(req["revision"], result):
                     self.state.status = "Listening · 预测为未确认内容"
                     self.publish()
