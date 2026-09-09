@@ -266,8 +266,8 @@ def main():
     # history window is elsewhere. Native title bar provides drag and resize.
     overlay = tk.Toplevel(root)
     overlay.title("PreSense · 浮动字幕（拖动标题栏移动）")
-    overlay.geometry("900x280+100+100")
-    overlay.minsize(460, 180)
+    overlay.overrideredirect(True)
+    overlay.geometry("+100+100")
     overlay.configure(bg="#101319")
     overlay.attributes("-topmost", True)
     overlay.withdraw()
@@ -276,7 +276,11 @@ def main():
     overlay_size = tk.IntVar(value=18)
     overlay_mode = tk.StringVar(value="实时字幕")
     overlay_cache = {}
-    toolbar = tk.Frame(overlay, bg="#191e27")
+    settings = tk.Toplevel(root)
+    settings.title("双语字幕设置")
+    settings.withdraw()
+    settings.protocol("WM_DELETE_WINDOW", settings.withdraw)
+    toolbar = tk.Frame(settings, bg="#191e27")
     toolbar.pack(fill="x")
     tk.Checkbutton(toolbar, text="暂停显示", variable=overlay_paused,
                    bg="#191e27", fg="white", selectcolor="#101319").pack(side="left")
@@ -297,26 +301,62 @@ def main():
              bg="#191e27", fg="white", highlightthickness=0,
              variable=tk.IntVar(value=95)).pack(side="left")
     overlay.attributes("-alpha", 0.95)
-    overlay_status = tk.Label(overlay, text="等待字幕", bg="#101319", fg="#b6c5d5", anchor="w")
+    overlay_status = tk.Label(settings, text="等待字幕", anchor="w")
     overlay_status.pack(fill="x", padx=12)
-    overlay_body = tk.Frame(overlay, bg="#101319")
-    overlay_body.pack(fill="both", expand=True, padx=12, pady=5)
-    overlay_body.columnconfigure(0, weight=1)
+    tk.Label(settings, text="拖动字幕移动位置 · 右键打开设置 · Esc 隐藏字幕").pack(padx=12, pady=5)
+    overlay_width = tk.IntVar(value=900)
     for row in range(2):
-        overlay_body.rowconfigure(row, weight=1, uniform="subtitle")
-        widget = tk.Text(overlay_body, height=2, width=1, wrap="word", relief="flat",
-                         bg="#101319", fg="white", font=("Segoe UI", 18), state="disabled")
-        widget.grid(row=row, column=0, sticky="nsew", pady=3)
-        bar = tk.Scrollbar(overlay_body, command=widget.yview)
-        bar.grid(row=row, column=1, sticky="ns")
-        widget.configure(yscrollcommand=bar.set)
+        widget = tk.Label(overlay, text="", wraplength=900, justify="center",
+                          bg="#101319", fg="white", font=("Segoe UI", 18), padx=14, pady=3)
+        widget.pack(fill="x")
         overlay_fields.append(widget)
+
+    def change_width(value):
+        for widget in overlay_fields:
+            widget.configure(wraplength=int(float(value)))
+
+    tk.Scale(settings, from_=400, to=1400, resolution=50, orient="horizontal",
+             label="字幕宽度", variable=overlay_width, command=change_width,
+             length=350).pack(fill="x", padx=12)
+    drag = {}
+
+    def begin_drag(event):
+        drag.update(x=event.x_root, y=event.y_root, wx=overlay.winfo_x(), wy=overlay.winfo_y())
+
+    def move_drag(event):
+        if drag:
+            x = drag["wx"] + event.x_root - drag["x"]
+            y = drag["wy"] + event.y_root - drag["y"]
+            overlay.geometry(f"{x:+d}{y:+d}")
+
+    def show_settings(event=None):
+        settings.deiconify()
+        settings.lift()
+
+    for widget in [overlay, *overlay_fields]:
+        widget.bind("<ButtonPress-1>", begin_drag)
+        widget.bind("<B1-Motion>", move_drag)
+        widget.bind("<Button-3>", show_settings)
+    overlay.bind("<Escape>", lambda event: overlay.withdraw())
+
+    def center_overlay():
+        overlay.update_idletasks()
+        x = max(0, (overlay.winfo_screenwidth() - overlay.winfo_reqwidth()) // 2)
+        y = max(0, overlay.winfo_screenheight() - overlay.winfo_reqheight() - 110)
+        overlay.geometry(f"+{x}+{y}")
 
     def show_overlay():
         overlay.deiconify()
+        update_overlay()
+        center_overlay()
         overlay.lift()
 
-    tk.Button(root, text="打开浮动字幕 / Overlay", command=show_overlay).pack(pady=3)
+    tk.Button(settings, text="移到屏幕底部中央", command=center_overlay).pack(pady=3)
+    tk.Button(settings, text="隐藏字幕", command=overlay.withdraw).pack(pady=3)
+    buttons = tk.Frame(root, bg="#101319")
+    buttons.pack(pady=3)
+    tk.Button(buttons, text="打开双语字幕条", command=show_overlay).pack(side="left", padx=4)
+    tk.Button(buttons, text="字幕设置", command=show_settings).pack(side="left", padx=4)
 
     def update_overlay():
         if overlay.state() == "withdrawn" or overlay_paused.get():
@@ -334,12 +374,7 @@ def main():
             if overlay_cache.get(i) == value:
                 continue
             widget = overlay_fields[i]
-            top = widget.index("@0,0")
-            widget.configure(state="normal")
-            widget.delete("1.0", "end")
-            widget.insert("1.0", value)
-            widget.configure(state="disabled")
-            widget.yview(top)
+            widget.configure(text=value)
             overlay_cache[i] = value
 
     def close():
