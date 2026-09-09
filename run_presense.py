@@ -387,7 +387,7 @@ def main():
             for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 self.create_text(x + dx, 5 + dy, fill="black", **opts)
             self.create_text(x, 5, fill="white", **opts)
-            height = tkfont.Font(font=self.caption_font).metrics("linespace") * 2 + 12
+            height = tkfont.Font(font=self.caption_font).metrics("linespace") * max(1, self.pages[page].count("\n") + 1) + 6
             super().configure(width=self.wrap + 28, height=height)
 
     for row in range(2):
