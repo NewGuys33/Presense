@@ -12,6 +12,29 @@ import time
 ROOT = Path(__file__).resolve().parent
 
 
+class ReadingQueue:
+    """Present translated final utterances once, with a readable dwell time."""
+    def __init__(self):
+        self.session = None
+        self.seen = set()
+        self.pair = ("等待译文…", "")
+        self.until = 0.0
+
+    def update(self, session, rows, now):
+        if session != self.session:
+            self.__init__()
+            self.session = session
+        ids = {row["id"] for row in rows}
+        self.seen.intersection_update(ids)
+        ready = [row for row in rows if row["translation"] and row["id"] not in self.seen]
+        if now >= self.until and ready:
+            row = ready[0]
+            self.pair = (row["text"], row["translation"])
+            self.seen.add(row["id"])
+            self.until = now + max(3.0, min(15.0, len(row["translation"]) / 6.0))
+        return self.pair
+
+
 def load_config():
     import yaml
     path = ROOT / "config.yaml"
@@ -268,13 +291,18 @@ def main():
     overlay.title("PreSense · 浮动字幕（拖动标题栏移动）")
     overlay.overrideredirect(True)
     overlay.geometry("+100+100")
-    overlay.configure(bg="#101319")
+    transparent_key = "#010203"
+    overlay.configure(bg=transparent_key)
+    if sys.platform == "win32":
+        overlay.attributes("-transparentcolor", transparent_key)
     overlay.attributes("-topmost", True)
     overlay.withdraw()
     overlay.protocol("WM_DELETE_WINDOW", overlay.withdraw)
     overlay_paused = tk.BooleanVar(value=False)
     overlay_size = tk.IntVar(value=18)
-    overlay_mode = tk.StringVar(value="实时字幕")
+    overlay_mode = tk.StringVar(value="阅读优先")
+    reading_queue = ReadingQueue()
+    overlay_tick = time.monotonic()
     overlay_cache = {}
     settings = tk.Toplevel(root)
     settings.title("双语字幕设置")
@@ -284,7 +312,7 @@ def main():
     toolbar.pack(fill="x")
     tk.Checkbutton(toolbar, text="暂停显示", variable=overlay_paused,
                    bg="#191e27", fg="white", selectcolor="#101319").pack(side="left")
-    tk.OptionMenu(toolbar, overlay_mode, "实时字幕", "已确认字幕").pack(side="left")
+    tk.OptionMenu(toolbar, overlay_mode, "阅读优先", "实时字幕", "已确认字幕").pack(side="left")
     tk.Label(toolbar, text="字号", bg="#191e27", fg="white").pack(side="left", padx=5)
     overlay_fields = []
 
@@ -305,10 +333,33 @@ def main():
     overlay_status.pack(fill="x", padx=12)
     tk.Label(settings, text="拖动字幕移动位置 · 右键打开设置 · Esc 隐藏字幕").pack(padx=12, pady=5)
     overlay_width = tk.IntVar(value=900)
+    class OutlinedCaption(tk.Canvas):
+        def __init__(self, parent):
+            super().__init__(parent, bg=transparent_key, highlightthickness=0,
+                             width=928, height=36)
+            self.caption = ""
+            self.caption_font = ("Segoe UI", 18)
+            self.wrap = 900
+
+        def configure(self, **kwargs):
+            self.caption = kwargs.pop("text", self.caption)
+            self.caption_font = kwargs.pop("font", self.caption_font)
+            self.wrap = kwargs.pop("wraplength", self.wrap)
+            if kwargs:
+                super().configure(**kwargs)
+            self.delete("all")
+            opts = dict(text=self.caption, font=self.caption_font, width=self.wrap,
+                        anchor="n", justify="center")
+            x = (self.wrap + 28) / 2
+            for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1)):
+                self.create_text(x + dx, 5 + dy, fill="black", **opts)
+            item = self.create_text(x, 5, fill="white", **opts)
+            bounds = self.bbox(item)
+            super().configure(width=self.wrap + 28, height=(bounds[3] + 5 if bounds else 36))
+
     for row in range(2):
-        widget = tk.Label(overlay, text="", wraplength=900, justify="center",
-                          bg="#101319", fg="white", font=("Segoe UI", 18), padx=14, pady=3)
-        widget.pack(fill="x")
+        widget = OutlinedCaption(overlay)
+        widget.pack()
         overlay_fields.append(widget)
 
     def change_width(value):
@@ -359,9 +410,19 @@ def main():
     tk.Button(buttons, text="字幕设置", command=show_settings).pack(side="left", padx=4)
 
     def update_overlay():
+        nonlocal overlay_tick
+        now = time.monotonic()
+        elapsed = now - overlay_tick
+        overlay_tick = now
         if overlay.state() == "withdrawn" or overlay_paused.get():
+            reading_queue.until += elapsed
             return
-        if overlay_mode.get() == "实时字幕" and latest_snap.get("live"):
+        if overlay_mode.get() == "阅读优先":
+            rows = latest_snap.get("transcript", [])
+            pair = reading_queue.update(latest_snap.get("session_id"), rows, now)
+            pending = sum(row["id"] not in reading_queue.seen for row in rows)
+            note = f"阅读优先 · 待显示/待翻译 {pending} 段 · 主窗口可回看"
+        elif overlay_mode.get() == "实时字幕" and latest_snap.get("live"):
             pair = (shown.get("live", ""), shown.get("live_translation", ""))
             note = "识别中 · 中文为可修订草稿"
         else:
