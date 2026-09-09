@@ -12,6 +12,29 @@ from presense.demo import run_demo
 from bootstrap import patch_main, OLD, TRANSLATOR_OLD
 
 
+class ReadingQueueTests(unittest.TestCase):
+    def test_translation_waits_and_new_sentence_does_not_interrupt(self):
+        from run_presense import ReadingQueue
+        q = ReadingQueue()
+        rows = [{"id": 1, "text": "One", "translation": ""}]
+        self.assertEqual(q.update("a", rows, 0), ("等待译文…", ""))
+        rows[0]["translation"] = "第一句"
+        self.assertEqual(q.update("a", rows, 1), ("One", "第一句"))
+        rows.append({"id": 2, "text": "Two", "translation": "第二句"})
+        self.assertEqual(q.update("a", rows, 2), ("One", "第一句"))
+        self.assertEqual(q.update("a", rows, 4), ("Two", "第二句"))
+
+    def test_late_translation_and_new_session(self):
+        from run_presense import ReadingQueue
+        q = ReadingQueue()
+        rows = [{"id": 1, "text": "One", "translation": ""},
+                {"id": 2, "text": "Two", "translation": "第二句"}]
+        q.update("a", rows, 0)
+        rows[0]["translation"] = "迟到的第一句"
+        self.assertEqual(q.update("a", rows, 4)[0], "One")
+        self.assertEqual(q.update("b", [], 5), ("等待译文…", ""))
+
+
 class Clock:
     def __init__(self): self.now = 0
     def __call__(self): return self.now
