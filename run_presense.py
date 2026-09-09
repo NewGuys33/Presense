@@ -324,7 +324,7 @@ def main():
 
     def overlay_font(value):
         for widget in overlay_fields:
-            widget.configure(font=("Microsoft YaHei", int(float(value)), "bold"))
+            widget.configure(font=("Microsoft YaHei", int(float(value)), "normal"))
 
     tk.Scale(toolbar, from_=12, to=32, orient="horizontal", variable=overlay_size,
              command=overlay_font, length=120, bg="#191e27", fg="white",
@@ -344,7 +344,7 @@ def main():
             super().__init__(parent, bg=transparent_key, highlightthickness=0,
                              width=928, height=36)
             self.caption = ""
-            self.caption_font = ("Microsoft YaHei", 18, "bold")
+            self.caption_font = ("Microsoft YaHei", 18, "normal")
             self.pages = [""]
             self.page_at = time.monotonic()
             self.wrap = 900
@@ -384,9 +384,13 @@ def main():
             opts = dict(text=self.pages[page], font=self.caption_font,
                         anchor="n", justify="center")
             x = (self.wrap + 28) / 2
-            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                self.create_text(x + dx, 5 + dy, fill="black", **opts)
-            self.create_text(x, 5, fill="white", **opts)
+            item = self.create_text(x, 5, fill="#111111", **opts)
+            bounds = self.bbox(item)
+            if self.pages[page].strip() and bounds:
+                left, top, right, bottom = bounds
+                background = self.create_rectangle(left - 8, top - 3, right + 8, bottom + 3,
+                                                   fill="#d0d0d0", outline="")
+                self.tag_lower(background, item)
             height = tkfont.Font(font=self.caption_font).metrics("linespace") * max(1, self.pages[page].count("\n") + 1) + 6
             super().configure(width=self.wrap + 28, height=height)
 
