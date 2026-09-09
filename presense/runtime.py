@@ -1,5 +1,7 @@
 """Adapter to pinned CaptionSystem; retains WASAPI, final ASR and translation."""
 import asyncio
+import copy
+import math
 import sys
 from pathlib import Path
 from .state import CaptionState
@@ -24,6 +26,17 @@ def load_upstream():
 
 
 def build_system(upstream, config, device, emit, status):
+    # Short caption chunks by default, including installations with an older
+    # config.yaml. Override presense.segment_pause_seconds to tune the pause;
+    # null retains the original vad.post_speech_silence_duration setting.
+    config = copy.deepcopy(config)
+    pause = config.get("presense", {}).get("segment_pause_seconds", 0.35)
+    if pause is not None:
+        pause = float(pause)
+        if not math.isfinite(pause) or not 0.2 <= pause <= 2.0:
+            raise ValueError("presense.segment_pause_seconds must be between 0.2 and 2.0 seconds")
+        config.setdefault("vad", {})["post_speech_silence_duration"] = pause
+
     class PresenseSystem(upstream.CaptionSystem):
         def __init__(self):
             super().__init__(config, device, config["whisper"]["model"],
