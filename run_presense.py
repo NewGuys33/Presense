@@ -262,6 +262,86 @@ def main():
         widget.yview(top)
         shown[key] = value
 
+    # Independent top-level window: keep captions over the video while the
+    # history window is elsewhere. Native title bar provides drag and resize.
+    overlay = tk.Toplevel(root)
+    overlay.title("PreSense · 浮动字幕（拖动标题栏移动）")
+    overlay.geometry("900x280+100+100")
+    overlay.minsize(460, 180)
+    overlay.configure(bg="#101319")
+    overlay.attributes("-topmost", True)
+    overlay.withdraw()
+    overlay.protocol("WM_DELETE_WINDOW", overlay.withdraw)
+    overlay_paused = tk.BooleanVar(value=False)
+    overlay_size = tk.IntVar(value=18)
+    overlay_mode = tk.StringVar(value="实时字幕")
+    overlay_cache = {}
+    toolbar = tk.Frame(overlay, bg="#191e27")
+    toolbar.pack(fill="x")
+    tk.Checkbutton(toolbar, text="暂停显示", variable=overlay_paused,
+                   bg="#191e27", fg="white", selectcolor="#101319").pack(side="left")
+    tk.OptionMenu(toolbar, overlay_mode, "实时字幕", "已确认字幕").pack(side="left")
+    tk.Label(toolbar, text="字号", bg="#191e27", fg="white").pack(side="left", padx=5)
+    overlay_fields = []
+
+    def overlay_font(value):
+        for widget in overlay_fields:
+            widget.configure(font=("Segoe UI", int(float(value))))
+
+    tk.Scale(toolbar, from_=12, to=32, orient="horizontal", variable=overlay_size,
+             command=overlay_font, length=120, bg="#191e27", fg="white",
+             highlightthickness=0).pack(side="left")
+    tk.Label(toolbar, text="不透明度", bg="#191e27", fg="white").pack(side="left", padx=5)
+    tk.Scale(toolbar, from_=60, to=100, orient="horizontal", length=100,
+             command=lambda v: overlay.attributes("-alpha", float(v) / 100),
+             bg="#191e27", fg="white", highlightthickness=0,
+             variable=tk.IntVar(value=95)).pack(side="left")
+    overlay.attributes("-alpha", 0.95)
+    overlay_status = tk.Label(overlay, text="等待字幕", bg="#101319", fg="#b6c5d5", anchor="w")
+    overlay_status.pack(fill="x", padx=12)
+    overlay_body = tk.Frame(overlay, bg="#101319")
+    overlay_body.pack(fill="both", expand=True, padx=12, pady=5)
+    overlay_body.columnconfigure(0, weight=1)
+    for row in range(2):
+        overlay_body.rowconfigure(row, weight=1, uniform="subtitle")
+        widget = tk.Text(overlay_body, height=2, width=1, wrap="word", relief="flat",
+                         bg="#101319", fg="white", font=("Segoe UI", 18), state="disabled")
+        widget.grid(row=row, column=0, sticky="nsew", pady=3)
+        bar = tk.Scrollbar(overlay_body, command=widget.yview)
+        bar.grid(row=row, column=1, sticky="ns")
+        widget.configure(yscrollcommand=bar.set)
+        overlay_fields.append(widget)
+
+    def show_overlay():
+        overlay.deiconify()
+        overlay.lift()
+
+    tk.Button(root, text="打开浮动字幕 / Overlay", command=show_overlay).pack(pady=3)
+
+    def update_overlay():
+        if overlay.state() == "withdrawn" or overlay_paused.get():
+            return
+        if overlay_mode.get() == "实时字幕" and latest_snap.get("live"):
+            pair = (shown.get("live", ""), shown.get("live_translation", ""))
+            note = "识别中 · 中文为可修订草稿"
+        else:
+            rows = latest_snap.get("transcript", [])
+            row = rows[-1] if rows else None
+            pair = (row["text"], row["translation"] or "翻译中…") if row else ("等待老师说话…", "")
+            note = "已确认字幕" if row else "等待字幕"
+        overlay_status.configure(text=note)
+        for i, value in enumerate(pair):
+            if overlay_cache.get(i) == value:
+                continue
+            widget = overlay_fields[i]
+            top = widget.index("@0,0")
+            widget.configure(state="normal")
+            widget.delete("1.0", "end")
+            widget.insert("1.0", value)
+            widget.configure(state="disabled")
+            widget.yview(top)
+            overlay_cache[i] = value
+
     def close():
         stop.set()
         label.configure(text="Stopping…")
@@ -307,6 +387,7 @@ def main():
         else:
             # Keep readable draft while its replacement is being translated.
             live_note.configure(text="LIVE 中文修订中 · 暂时保留上一版草稿")
+        update_overlay()
         root.after(50, poll)
 
     poll()
