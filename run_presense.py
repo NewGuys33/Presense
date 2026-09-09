@@ -28,10 +28,15 @@ class ReadingQueue:
         self.seen.intersection_update(ids)
         ready = [row for row in rows if row["translation"] and row["id"] not in self.seen]
         if now >= self.until and ready:
+            # Keep at most the two newest ready cues when falling behind.
+            # Older text remains in the transcript, but not in the overlay queue.
+            if len(ready) > 2:
+                self.seen.update(row["id"] for row in ready[:-2])
+                ready = ready[-2:]
             row = ready[0]
             self.pair = (row["text"], row["translation"])
             self.seen.add(row["id"])
-            self.until = now + max(3.0, min(15.0, len(row["translation"]) / 6.0))
+            self.until = now + 2.0
         return self.pair
 
 
@@ -371,7 +376,7 @@ def main():
             self.render_page()
 
         def render_page(self):
-            page = min(len(self.pages) - 1, int((time.monotonic() - self.page_at) / 4))
+            page = min(len(self.pages) - 1, int((time.monotonic() - self.page_at) / 2))
             if getattr(self, "rendered_page", None) == page:
                 return
             self.rendered_page = page
@@ -451,7 +456,7 @@ def main():
             rows = latest_snap.get("transcript", [])
             pair = reading_queue.update(latest_snap.get("session_id"), rows, now)
             pending = sum(row["id"] not in reading_queue.seen for row in rows)
-            note = f"阅读优先 · 待显示/待翻译 {pending} 段 · 主窗口可回看"
+            note = f"阅读优先（轻延迟，积压自动追赶） · 待显示/待翻译 {pending} 段 · 主窗口可回看"
         elif overlay_mode.get() == "实时字幕" and latest_snap.get("live"):
             pair = (shown.get("live", ""), shown.get("live_translation", ""))
             note = "识别中 · 中文为可修订草稿"
@@ -470,7 +475,7 @@ def main():
             overlay_cache[i] = value
             changed_pair = True
         if changed_pair and overlay_mode.get() == "阅读优先":
-            reading_queue.until = max(reading_queue.until, now + max(len(w.pages) for w in overlay_fields) * 4)
+            reading_queue.until = now + min(4.0, max(len(w.pages) for w in overlay_fields) * 2.0)
         for widget in overlay_fields:
             widget.render_page()
 
