@@ -66,6 +66,13 @@ def build_system(upstream, config, device, emit, status):
 
         def prepare(self):
             super().prepare()
+            if self._recorder is not None:
+                from .audio_context import install_audio_context
+                install_audio_context(
+                    self._recorder,
+                    config.get("presense", {}).get("audio_context_seconds", 1.5),
+                    status,
+                )
             if self._recorder is None:
                 status("ASR 初始化失败；请查看控制台，检查模型下载和依赖")
                 self._stop_event.set()
